@@ -1,0 +1,70 @@
+// Добавляем импорт VoiceChannel
+import VoiceChannel from './components/VoiceChannel';
+
+// Добавляем состояния
+const [activeVoiceChannel, setActiveVoiceChannel] = useState(null);
+
+// В функции createChannel добавляем поддержку голосовых каналов
+const createVoiceChannel = async () => {
+  const name = prompt('Название голосового канала:');
+  if (name && currentServer) {
+    await axios.post(`${API_URL}/servers/${currentServer.id}/voice-channels`,
+      { name },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    loadServers();
+  }
+};
+
+// В панели каналов отображаем голосовые каналы с иконкой
+// В channels.map добавляем проверку на тип voice
+{c.type === 'voice' ? (
+  <div key={c.id} className={`channel voice-channel ${activeVoiceChannel?.channelId === c.id ? 'active' : ''}`}
+       onClick={() => {
+         if (activeVoiceChannel) {
+           setActiveVoiceChannel(null);
+         }
+         setActiveVoiceChannel({
+           channelId: c.id,
+           serverId: currentServer.id,
+           serverName: currentServer.name,
+           channelName: c.name
+         });
+       }}>
+    <span><i className="fas fa-volume-up"></i> {c.name}</span>
+    {activeVoiceChannel?.channelId === c.id && (
+      <span className="voice-active-badge">🔴 LIVE</span>
+    )}
+  </div>
+) : (
+  // текстовый канал
+  <div key={c.id} className={`channel ${currentChannel === c.id ? 'active' : ''}`}
+       onClick={() => setCurrentChannel(c.id)}>
+    <span># {c.name}</span>
+    {isAdmin && (
+      <div className="channel-actions">
+        <button onClick={(e) => { e.stopPropagation(); editChannel(c.id, c.name); }}>✏️</button>
+        <button onClick={(e) => { e.stopPropagation(); deleteChannel(c.id, c.name); }}>🗑️</button>
+      </div>
+    )}
+  </div>
+)}
+
+// Добавляем кнопку создания голосового канала в настройках сервера
+<button onClick={createVoiceChannel}>
+  <i className="fas fa-microphone"></i> Создать голосовой канал
+</button>
+
+// Добавляем отображение активного голосового канала
+{activeVoiceChannel && (
+  <VoiceChannel
+    channelId={activeVoiceChannel.channelId}
+    serverId={activeVoiceChannel.serverId}
+    serverName={activeVoiceChannel.serverName}
+    channelName={activeVoiceChannel.channelName}
+    userID={String(user.id)}
+    userName={user.username}
+    socket={socket}
+    onClose={() => setActiveVoiceChannel(null)}
+  />
+)}

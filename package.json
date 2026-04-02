@@ -1,0 +1,85 @@
+{
+  "name": "nexvoice-desktop",
+  "version": "1.0.1",
+  "description": "NexVoice - современный мессенджер с голосовыми звонками",
+  "main": "electron.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "electron": "electron .",
+    "electron-build": "npm run build && electron .",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "publish": "npm run dist:win && electron-builder --win --x64 -p always"
+  },
+  "author": "NexVoice Team",
+  "license": "MIT",
+  "dependencies": {
+    "@zegocloud/zego-uikit-prebuilt": "^2.17.3",
+    "axios": "^1.14.0",
+    "electron-updater": "^6.1.7",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "vite": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.nexvoice.app",
+    "productName": "NexVoice",
+    "publisherName": "NexVoice Team",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron.js",
+      "splash.html",
+      "public/**/*",
+      "!node_modules/.cache",
+      "!dist-electron"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/favicon.ico",
+      "artifactName": "NexVoice-Setup-${version}.${ext}",
+      "publisherName": "NexVoice Team"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NexVoice"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "public/favicon.ico",
+      "category": "Network"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "public/favicon.ico",
+      "category": "public.app-category.social-networking"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "nexvoice",
+      "repo": "nexvoice-desktop",
+      "releaseType": "release"
+    }
+  }
+}

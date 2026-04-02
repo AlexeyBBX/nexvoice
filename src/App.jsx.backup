@@ -1,0 +1,821 @@
+import React, { useState, useEffect, useRef } from 'react';
+import io from 'socket.io-client';
+import axios from 'axios';
+import VideoCall from './components/VideoCall';
+import './App.css';
+
+const API_URL = '/api';
+const SOCKET_URL = '';
+
+function App() {
+  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [user, setUser] = useState(null);
+  const [servers, setServers] = useState([]);
+  const [currentServer, setCurrentServer] = useState(null);
+  const [currentChannel, setCurrentChannel] = useState(null);
+  const [channels, setChannels] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [pinnedMessages, setPinnedMessages] = useState([]);
+  const [showPins, setShowPins] = useState(false);
+  const [members, setMembers] = useState([]);
+  const [friends, setFriends] = useState([]);
+  const [chats, setChats] = useState([]);
+  const [currentChat, setCurrentChat] = useState(null);
+  const [privateMessages, setPrivateMessages] = useState([]);
+  const [friendRequests, setFriendRequests] = useState([]);
+  const [serverInvites, setServerInvites] = useState([]);
+  const [activeTab, setActiveTab] = useState('online');
+  const [showProfile, setShowProfile] = useState(false);
+  const [showServerSettings, setShowServerSettings] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [typingUsers, setTypingUsers] = useState({});
+  const [socket, setSocket] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  const [messageInput, setMessageInput] = useState('');
+  const [incomingCall, setIncomingCall] = useState(null);
+  const [activeCall, setActiveCall] = useState(null);
+  const typingTimeoutRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    if (token) {
+      loadUser();
+      const newSocket = io(SOCKET_URL);
+      setSocket(newSocket);
+      newSocket.on('connect', () => newSocket.emit('authenticate', token));
+      newSocket.on('server_invite', () => loadServerInvites());
+      newSocket.on('friend_request', (data) => {
+        loadFriendRequests();
+        addNotification('Новая заявка', `${data.fromUsername} хочет добавить вас в друзья`);
+      });
+      newSocket.on('friend_accepted', () => loadFriends());
+      newSocket.on('private_message', (msg) => {
+        if (currentChat?.id === msg.from_user) {
+          setPrivateMessages(prev => [...prev, msg]);
+        }
+        loadChats();
+        addNotification('Новое сообщение', `${msg.from_username}: ${msg.content.substring(0,50)}`);
+      });
+      newSocket.on('user_typing', (data) => {
+        setTypingUsers(prev => ({ ...prev, [data.fromUser]: data.isTyping }));
+        setTimeout(() => {
+          setTypingUsers(prev => ({ ...prev, [data.fromUser]: false }));
+        }, 2000);
+      });
+      newSocket.on('incoming_call', (data) => {
+        console.log('📞 Incoming call received:', data);
+        setIncomingCall(data);
+        addNotification('Входящий звонок', `${data.fromUsername} звонит вам!`);
+      });
+      newSocket.on('call_ended', () => {
+        setActiveCall(null);
+        setIncomingCall(null);
+      });
+      return () => newSocket.close();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (currentChannel) {
+      loadMessages(currentChannel);
+      loadPinnedMessages(currentChannel);
+    }
+  }, [currentChannel]);
+
+  useEffect(() => {
+    if (currentChat) {
+      loadPrivateMessages(currentChat.id);
+    }
+  }, [currentChat]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, privateMessages]);
+
+  const addNotification = (title, message) => {
+    const id = Date.now();
+    setNotifications(prev => [...prev, { id, title, message }]);
+    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
+  };
+
+  const loadUser = async () => {
+    const res = await axios.get(`${API_URL}/users/me`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setUser(res.data);
+    loadServers();
+    loadFriends();
+    loadFriendRequests();
+    loadServerInvites();
+    loadChats();
+  };
+
+  const loadServers = async () => {
+    const res = await axios.get(`${API_URL}/servers`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setServers(res.data);
+    if (res.data.length && !currentServer) {
+      setCurrentServer(res.data[0]);
+      setChannels(res.data[0].channels || []);
+      if (res.data[0].channels?.length) setCurrentChannel(res.data[0].channels[0].id);
+      loadMembers(res.data[0].id);
+    }
+  };
+
+  const loadMessages = async (channelId) => {
+    const res = await axios.get(`${API_URL}/servers/${currentServer.id}/channels/${channelId}/messages`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setMessages(res.data);
+  };
+
+  const loadPinnedMessages = async (channelId) => {
+    try {
+      const res = await axios.get(`${API_URL}/servers/${currentServer.id}/channels/${channelId}/pins`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setPinnedMessages(res.data);
+    } catch (err) {
+      console.error('Error loading pins:', err);
+    }
+  };
+
+  const loadChats = async () => {
+    const res = await axios.get(`${API_URL}/chats`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setChats(res.data);
+  };
+
+  const loadPrivateMessages = async (userId) => {
+    const res = await axios.get(`${API_URL}/messages/${userId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setPrivateMessages(res.data);
+  };
+
+  const loadMembers = async (serverId) => {
+    const res = await axios.get(`${API_URL}/servers/${serverId}/members`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setMembers(res.data);
+  };
+
+  const loadFriends = async () => {
+    const res = await axios.get(`${API_URL}/friends`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setFriends(res.data);
+  };
+
+  const loadFriendRequests = async () => {
+    const res = await axios.get(`${API_URL}/friends/requests`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setFriendRequests(res.data);
+  };
+
+  const loadServerInvites = async () => {
+    const res = await axios.get(`${API_URL}/servers/invites`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setServerInvites(res.data);
+  };
+
+  const searchMessages = async (query) => {
+    if (!query) {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      if (currentServer && currentChannel) {
+        const res = await axios.get(`${API_URL}/servers/${currentServer.id}/channels/${currentChannel}/search?q=${query}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setSearchResults(res.data);
+      } else {
+        const res = await axios.get(`${API_URL}/messages/search?q=${query}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setSearchResults(res.data);
+      }
+    } catch (err) {
+      console.error('Search error:', err);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!messageInput.trim()) return;
+    
+    if (currentServer && currentChannel) {
+      await axios.post(`${API_URL}/servers/${currentServer.id}/channels/${currentChannel}/messages`,
+        { content: messageInput },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      loadMessages(currentChannel);
+    } else if (currentChat) {
+      await axios.post(`${API_URL}/messages`,
+        { toUserId: currentChat.id, content: messageInput },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      loadPrivateMessages(currentChat.id);
+      loadChats();
+    }
+    setMessageInput('');
+  };
+
+  const sendTyping = (isTyping) => {
+    if (currentChat && socket) {
+      socket.emit('typing', { toUserId: currentChat.id, isTyping });
+    }
+  };
+
+  const handleTyping = (e) => {
+    setMessageInput(e.target.value);
+    sendTyping(true);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => sendTyping(false), 1000);
+  };
+
+  const pinMessage = async (messageId) => {
+    try {
+      await axios.post(`${API_URL}/servers/${currentServer.id}/channels/${currentChannel}/messages/${messageId}/pin`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      loadPinnedMessages(currentChannel);
+      addNotification('Сообщение закреплено', '');
+    } catch (err) {
+      console.error('Pin error:', err);
+    }
+  };
+
+  const unpinMessage = async (messageId) => {
+    try {
+      await axios.delete(`${API_URL}/servers/${currentServer.id}/channels/${currentChannel}/messages/${messageId}/pin`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      loadPinnedMessages(currentChannel);
+    } catch (err) {
+      console.error('Unpin error:', err);
+    }
+  };
+
+  const searchUsers = async (query) => {
+    if (!query) {
+      setSearchResults([]);
+      return;
+    }
+    const res = await axios.get(`${API_URL}/users/search?q=${query}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setSearchResults(res.data);
+  };
+
+  const sendFriendRequest = async (userId) => {
+    await axios.post(`${API_URL}/friends/request`, { friendId: userId }, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    addNotification('Заявка отправлена', 'Заявка в друзья отправлена');
+  };
+
+  const acceptFriendRequest = async (fromUserId) => {
+    await axios.post(`${API_URL}/friends/accept`, { fromUserId }, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    loadFriends();
+    loadFriendRequests();
+  };
+
+  const rejectFriendRequest = async (fromUserId) => {
+    await axios.post(`${API_URL}/friends/reject`, { fromUserId }, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    loadFriendRequests();
+  };
+
+  const createServer = async () => {
+    const name = prompt('Название сервера:');
+    if (name) {
+      await axios.post(`${API_URL}/servers`, { name }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      loadServers();
+    }
+  };
+
+  const inviteToServer = async () => {
+    const userId = prompt('Введите ID пользователя:');
+    if (userId && currentServer) {
+      await axios.post(`${API_URL}/servers/${currentServer.id}/invite`,
+        { userId: parseInt(userId) },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      addNotification('Приглашение отправлено', `Приглашение отправлено пользователю ${userId}`);
+    }
+  };
+
+  const acceptInvite = async (inviteId) => {
+    await axios.post(`${API_URL}/servers/invites/${inviteId}/accept`, {}, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    loadServers();
+    loadServerInvites();
+  };
+
+  const rejectInvite = async (inviteId) => {
+    await axios.post(`${API_URL}/servers/invites/${inviteId}/reject`, {}, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    loadServerInvites();
+  };
+
+  const createChannel = async () => {
+    const name = prompt('Название канала:');
+    if (name && currentServer) {
+      await axios.post(`${API_URL}/servers/${currentServer.id}/channels`,
+        { name, type: 'text' },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      loadServers();
+    }
+  };
+
+  const deleteChannel = async (channelId, channelName) => {
+    if (confirm(`Удалить канал "${channelName}"?`)) {
+      await axios.delete(`${API_URL}/servers/${currentServer.id}/channels/${channelId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      loadServers();
+    }
+  };
+
+  const editChannel = async (channelId, oldName) => {
+    const newName = prompt('Новое название канала:', oldName);
+    if (newName && newName !== oldName) {
+      await axios.put(`${API_URL}/servers/${currentServer.id}/channels/${channelId}`,
+        { name: newName, type: 'text' },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      loadServers();
+    }
+  };
+
+  const changeMemberRole = async (userId, role) => {
+    await axios.put(`${API_URL}/servers/${currentServer.id}/members/${userId}/role`,
+      { role },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    loadMembers(currentServer.id);
+  };
+
+  const kickMember = async (userId, username) => {
+    if (confirm(`Выгнать ${username} с сервера?`)) {
+      await axios.delete(`${API_URL}/servers/${currentServer.id}/members/${userId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      loadMembers(currentServer.id);
+    }
+  };
+
+  const updateAvatar = async (file) => {
+    const formData = new FormData();
+    formData.append('avatar', file);
+    try {
+      const res = await axios.post(`${API_URL}/upload-avatar`, formData, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
+      });
+      if (res.data.success) {
+        setUser({ ...user, avatar: res.data.avatar });
+        addNotification('Успех', 'Аватар обновлён!');
+        loadServers();
+        loadFriends();
+        loadChats();
+      }
+    } catch (err) {
+      console.error('Error uploading avatar:', err);
+      addNotification('Ошибка', 'Не удалось загрузить аватар');
+    }
+  };
+
+  const startCall = (targetUser) => {
+    console.log('📞 Starting call to:', targetUser);
+    if (socket && user) {
+      const roomID = `${Math.min(user.id, targetUser.id)}_${Math.max(user.id, targetUser.id)}`;
+      console.log('RoomID:', roomID);
+      socket.emit('call_user', {
+        targetUserId: targetUser.id,
+        signal: { roomID, userID: user.id, userName: user.username }
+      });
+      setActiveCall({ targetUser, roomID });
+    }
+  };
+
+  const acceptCall = () => {
+    if (incomingCall && user) {
+      console.log('📞 Accepting call from:', incomingCall);
+      const roomID = `${Math.min(user.id, incomingCall.from)}_${Math.max(user.id, incomingCall.from)}`;
+      console.log('RoomID:', roomID);
+      setActiveCall({ 
+        targetUser: { id: incomingCall.from, username: incomingCall.fromUsername }, 
+        roomID 
+      });
+      setIncomingCall(null);
+    }
+  };
+
+  const rejectCall = () => {
+    if (incomingCall && socket) {
+      socket.emit('call_rejected', { targetUserId: incomingCall.from });
+      setIncomingCall(null);
+    }
+  };
+
+  const endCall = () => {
+    if (activeCall && socket) {
+      socket.emit('end_call', { targetUserId: activeCall.targetUser.id });
+    }
+    setActiveCall(null);
+  };
+
+  const logout = () => {
+    localStorage.removeItem('token');
+    setToken(null);
+  };
+
+  const isOwner = currentServer && user && currentServer.owner_id === user.id;
+  const isAdmin = isOwner || (members.find(m => m.id === user?.id)?.role === 'admin');
+
+  const getAvatarUrl = (avatar, username) => {
+    if (avatar && avatar !== '/default-avatar.png') return avatar;
+    return `https://ui-avatars.com/api/?name=${username || 'U'}&background=6366f1&color=fff&size=128&rounded=true&bold=true`;
+  };
+
+  if (!token) {
+    return (
+      <div className="auth-container">
+        <div className="auth-card">
+          <h1>NexVoice</h1>
+          <input id="login-username" placeholder="Логин" />
+          <input id="login-password" type="password" placeholder="Пароль" />
+          <button onClick={async () => {
+            const res = await axios.post(`${API_URL}/login`, {
+              username: document.getElementById('login-username').value,
+              password: document.getElementById('login-password').value
+            });
+            if (res.data.token) {
+              localStorage.setItem('token', res.data.token);
+              setToken(res.data.token);
+            }
+          }}>Войти</button>
+          <button onClick={async () => {
+            const username = prompt('Имя:');
+            const password = prompt('Пароль:');
+            if (username && password) {
+              const res = await axios.post(`${API_URL}/register`, { username, password });
+              if (res.data.token) {
+                localStorage.setItem('token', res.data.token);
+                setToken(res.data.token);
+              }
+            }
+          }}>Регистрация</button>
+        </div>
+      </div>
+    );
+  }
+
+  const currentMessages = currentServer ? messages : privateMessages;
+  const currentTitle = currentServer 
+    ? `${currentServer.name} / ${channels.find(c => c.id === currentChannel)?.name || 'канал'}`
+    : currentChat?.username || 'Личные сообщения';
+
+  return (
+    <div className="app">
+      <div className="notifications">
+        {notifications.map(n => (
+          <div key={n.id} className="notification">{n.title}: {n.message}</div>
+        ))}
+      </div>
+
+      {incomingCall && (
+        <div className="incoming-call-overlay">
+          <div className="incoming-call-card">
+            <h3>📞 Входящий звонок</h3>
+            <p>{incomingCall.fromUsername} звонит вам</p>
+            <div className="incoming-call-buttons">
+              <button className="accept-call" onClick={acceptCall}>Принять</button>
+              <button className="reject-call" onClick={rejectCall}>Отклонить</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeCall && (
+        <VideoCall
+          roomID={activeCall.roomID}
+          userID={String(user.id)}
+          userName={user.username}
+          onClose={endCall}
+          isGroupCall={false}
+        />
+      )}
+
+      <div className="servers-bar">
+        <div className="server-icon dm-icon" onClick={() => {
+          setCurrentServer(null);
+          setCurrentChannel(null);
+          setCurrentChat(null);
+        }}>
+          💬
+        </div>
+        {servers.map(s => (
+          <div key={s.id} className={`server-icon ${currentServer?.id === s.id ? 'active' : ''}`}
+               onClick={() => {
+                 setCurrentServer(s);
+                 setCurrentChat(null);
+                 setChannels(s.channels || []);
+                 if (s.channels?.length) setCurrentChannel(s.channels[0].id);
+                 loadMembers(s.id);
+               }}>
+            <img src={getAvatarUrl(s.icon, s.name)} alt={s.name} />
+          </div>
+        ))}
+        <div className="server-icon add-server" onClick={createServer}>+</div>
+      </div>
+      
+      {currentServer ? (
+        <div className="channels-panel">
+          <div className="channels-header">
+            <span>{currentServer.name}</span>
+            <div className="channel-actions">
+              <button className="settings-btn" onClick={() => setShowSearch(true)}>🔍</button>
+              <button className="settings-btn" onClick={() => setShowPins(!showPins)}>📌</button>
+              <button className="settings-btn" onClick={() => setShowMembers(true)}>👥</button>
+              <button className="settings-btn" onClick={() => setShowServerSettings(true)}>⚙️</button>
+            </div>
+          </div>
+          <div className="channels-list">
+            {channels.map(c => (
+              <div key={c.id} className={`channel ${currentChannel === c.id ? 'active' : ''}`}
+                   onClick={() => setCurrentChannel(c.id)}>
+                <span># {c.name}</span>
+                {isAdmin && (
+                  <div className="channel-actions">
+                    <button onClick={(e) => { e.stopPropagation(); editChannel(c.id, c.name); }}>✏️</button>
+                    <button onClick={(e) => { e.stopPropagation(); deleteChannel(c.id, c.name); }}>🗑️</button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {isAdmin && <button className="add-channel" onClick={createChannel}>+ Добавить канал</button>}
+          </div>
+        </div>
+      ) : (
+        <div className="channels-panel">
+          <div className="channels-header">
+            <span>Личные сообщения</span>
+            <button className="settings-btn" onClick={() => setShowSearch(true)}>🔍</button>
+          </div>
+          <div className="chats-list">
+            {chats.map(chat => (
+              <div key={chat.user_id} className={`chat-item ${currentChat?.id === chat.user_id ? 'active' : ''}`}
+                   onClick={() => {
+                     setCurrentChat(chat);
+                     setCurrentServer(null);
+                   }}>
+                <img src={getAvatarUrl(chat.avatar, chat.username)} alt="" />
+                <div className="chat-info">
+                  <span>{chat.username}</span>
+                  <span className={`status-dot ${chat.status === 'online' ? 'online' : 'offline'}`}></span>
+                </div>
+                {chat.unread > 0 && <span className="unread-badge">{chat.unread}</span>}
+                <button className="call-chat-btn" onClick={(e) => {
+                  e.stopPropagation();
+                  startCall(chat);
+                }}>📞</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      <div className="chat-area">
+        <div className="chat-header">
+          <div>{currentTitle}</div>
+          <div className="typing-status">
+            {currentChat && typingUsers[currentChat.id] && <span>✍️ печатает...</span>}
+          </div>
+          <div className="chat-actions">
+            {currentChat && (
+              <button className="call-btn" onClick={() => startCall(currentChat)}>
+                <i className="fas fa-phone-alt"></i> Позвонить
+              </button>
+            )}
+            <button className="profile-btn" onClick={() => setShowProfile(true)}>
+              <img src={getAvatarUrl(user?.avatar, user?.username)} alt="" />
+            </button>
+          </div>
+        </div>
+        
+        {showPins && pinnedMessages.length > 0 && (
+          <div className="pinned-messages">
+            <div className="pins-header">📌 Закреплённые сообщения</div>
+            {pinnedMessages.map(msg => (
+              <div key={msg.id} className="pinned-message">
+                <span><strong>{msg.username}:</strong> {msg.content}</span>
+                {isAdmin && <button onClick={() => unpinMessage(msg.id)}>❌</button>}
+              </div>
+            ))}
+          </div>
+        )}
+        
+        <div className="chat-messages">
+          {currentMessages.map((msg, i) => (
+            <div key={i} className={`message ${msg.from_user === user?.id ? 'own' : ''}`}>
+              {msg.from_user !== user?.id && (
+                <img src={getAvatarUrl(msg.avatar, msg.from_username || msg.username)} alt="" />
+              )}
+              <div className="message-content">
+                <div className="message-author">{msg.from_username || msg.username}</div>
+                <div className="message-text">{msg.content}</div>
+              </div>
+              {currentServer && isAdmin && msg.from_user !== user?.id && (
+                <button className="pin-btn" onClick={() => pinMessage(msg.id)}>📌</button>
+              )}
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+        
+        <div className="message-input">
+          <input 
+            type="text" 
+            placeholder="Введите сообщение..." 
+            value={messageInput}
+            onChange={handleTyping}
+            onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+          />
+          <button onClick={sendMessage}>➤</button>
+        </div>
+      </div>
+      
+      <div className="friends-panel">
+        <div className="friends-header">
+          <span>Друзья</span>
+          <div className="search-box">
+            <input type="text" placeholder="Поиск..." onChange={(e) => searchUsers(e.target.value)} />
+          </div>
+        </div>
+        <div className="friends-tabs">
+          <div className={`tab ${activeTab === 'online' ? 'active' : ''}`} onClick={() => setActiveTab('online')}>В сети</div>
+          <div className={`tab ${activeTab === 'all' ? 'active' : ''}`} onClick={() => setActiveTab('all')}>Все</div>
+          <div className={`tab ${activeTab === 'pending' ? 'active' : ''}`} onClick={() => setActiveTab('pending')}>
+            Заявки {friendRequests.length > 0 && <span className="badge">{friendRequests.length}</span>}
+          </div>
+          <div className={`tab ${activeTab === 'invites' ? 'active' : ''}`} onClick={() => setActiveTab('invites')}>
+            Приглашения {serverInvites.length > 0 && <span className="badge">{serverInvites.length}</span>}
+          </div>
+        </div>
+        <div className="friends-list">
+          {activeTab === 'pending' && friendRequests.map(req => (
+            <div key={req.from_user} className="friend-request">
+              <img src={getAvatarUrl(req.avatar, req.username)} alt="" />
+              <span>{req.username}</span>
+              <button onClick={() => acceptFriendRequest(req.from_user)}>✅</button>
+              <button onClick={() => rejectFriendRequest(req.from_user)}>❌</button>
+            </div>
+          ))}
+          {activeTab === 'invites' && serverInvites.map(inv => (
+            <div key={inv.id} className="server-invite">
+              <div className="invite-info">
+                <strong>{inv.server_name}</strong>
+                <small>от {inv.from_username}</small>
+              </div>
+              <button onClick={() => acceptInvite(inv.id)}>✅</button>
+              <button onClick={() => rejectInvite(inv.id)}>❌</button>
+            </div>
+          ))}
+          {(activeTab === 'online' || activeTab === 'all') && (
+            <>
+              {searchResults.map(u => (
+                <div key={u.id} className="friend-item">
+                  <img src={getAvatarUrl(u.avatar, u.username)} alt="" />
+                  <span>{u.username}</span>
+                  <button onClick={() => sendFriendRequest(u.id)}>➕</button>
+                </div>
+              ))}
+              {!searchResults.length && friends.filter(f => activeTab === 'online' ? f.status === 'online' : true).map(f => (
+                <div key={f.id} className="friend-item" onClick={() => {
+                  setCurrentChat(f);
+                  setCurrentServer(null);
+                  loadPrivateMessages(f.id);
+                }}>
+                  <img src={getAvatarUrl(f.avatar, f.username)} alt="" />
+                  <span>{f.username}</span>
+                  <span className={`status ${f.status}`}></span>
+                  <button className="call-friend-btn" onClick={(e) => {
+                    e.stopPropagation();
+                    startCall(f);
+                  }}>📞</button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+      
+      {showSearch && (
+        <div className="modal-overlay" onClick={() => setShowSearch(false)}>
+          <div className="modal-content search-modal">
+            <h2>Поиск сообщений</h2>
+            <input 
+              type="text" 
+              placeholder="Введите текст..." 
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                searchMessages(e.target.value);
+              }}
+              autoFocus
+            />
+            <div className="search-results">
+              {searchResults.map(msg => (
+                <div key={msg.id} className="search-result">
+                  <strong>{msg.from_username || msg.username}</strong>
+                  <p>{msg.content}</p>
+                  <small>{new Date(msg.timestamp).toLocaleString()}</small>
+                </div>
+              ))}
+              {searchResults.length === 0 && searchQuery && <div>Ничего не найдено</div>}
+            </div>
+            <button onClick={() => setShowSearch(false)}>Закрыть</button>
+          </div>
+        </div>
+      )}
+      
+      {showProfile && (
+        <div className="modal-overlay" onClick={() => setShowProfile(false)}>
+          <div className="modal-content">
+            <h2>Профиль</h2>
+            <div className="avatar-upload">
+              <img src={getAvatarUrl(user?.avatar, user?.username)} alt="" />
+              <label className="upload-btn">
+                📷
+                <input type="file" accept="image/*" onChange={(e) => {
+                  if (e.target.files[0]) updateAvatar(e.target.files[0]);
+                }} />
+              </label>
+            </div>
+            <p><strong>{user?.username}</strong></p>
+            <p>ID: {user?.id}</p>
+            <button onClick={logout}>Выйти</button>
+            <button onClick={() => setShowProfile(false)}>Закрыть</button>
+          </div>
+        </div>
+      )}
+      
+      {showServerSettings && (
+        <div className="modal-overlay" onClick={() => setShowServerSettings(false)}>
+          <div className="modal-content">
+            <h2>Управление сервером</h2>
+            <button onClick={inviteToServer}>Пригласить друга</button>
+            <button onClick={createChannel}>Создать канал</button>
+            <button onClick={() => setShowMembers(true)}>Участники</button>
+            <button onClick={() => setShowServerSettings(false)}>Закрыть</button>
+          </div>
+        </div>
+      )}
+      
+      {showMembers && (
+        <div className="modal-overlay" onClick={() => setShowMembers(false)}>
+          <div className="modal-content members-list">
+            <h2>Участники сервера</h2>
+            {members.map(m => (
+              <div key={m.id} className="member-item">
+                <img src={getAvatarUrl(m.avatar, m.username)} alt="" />
+                <span>{m.username}</span>
+                <span className={`role ${m.role}`}>{m.role}</span>
+                {isOwner && m.id !== user?.id && (
+                  <div className="member-actions">
+                    <select onChange={(e) => changeMemberRole(m.id, e.target.value)} value={m.role}>
+                      <option value="member">Участник</option>
+                      <option value="admin">Админ</option>
+                    </select>
+                    <button onClick={() => kickMember(m.id, m.username)}>🔨</button>
+                  </div>
+                )}
+                <button className="call-member-btn" onClick={() => startCall(m)}>📞</button>
+              </div>
+            ))}
+            <button onClick={() => setShowMembers(false)}>Закрыть</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;
